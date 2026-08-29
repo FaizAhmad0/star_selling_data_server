@@ -1,4 +1,3 @@
-import bcrypt from "bcryptjs";
 import User from "../models/user.model.js";
 
 const PLATFORM_MAP = {
@@ -109,14 +108,13 @@ async function processUser(userData, managerCache) {
 
   const uid = await getNextUid(managerCache);
   const plainPassword = generatePassword(uid, name, primaryContact);
-  const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
   const newUserData = {
     uid,
     name,
     email,
     primaryContact,
-    password: hashedPassword,
+    password: plainPassword,
     enrolledBy,
     role: "user",
   };
