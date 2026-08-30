@@ -4,6 +4,20 @@ import { connectDatabase, disconnectDatabase } from "./config/database.js";
 
 let server;
 
+process.on("unhandledRejection", (err) => {
+  console.error("UNHANDLED REJECTION:", err.message);
+  if (server) {
+    server.close(() => process.exit(1));
+  } else {
+    process.exit(1);
+  }
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("UNCAUGHT EXCEPTION:", err.message);
+  process.exit(1);
+});
+
 const startServer = async () => {
   await connectDatabase();
 
@@ -18,6 +32,12 @@ const startServer = async () => {
     shuttingDown = true;
 
     console.log(`${signal} received. Shutting down gracefully...`);
+
+    const forceExit = setTimeout(() => {
+      console.error("Forced exit after timeout");
+      process.exit(1);
+    }, 10000);
+    forceExit.unref();
 
     try {
       await new Promise((resolve, reject) => {

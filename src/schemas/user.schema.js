@@ -11,6 +11,6 @@ const createUserSchema = z.object({
   enrolledBy: z.string().optional(),
 });
 
-const bulkUserSchema = z.array(createUserSchema).min(1, "At least one user is required");
+const bulkUserSchema = z.array(createUserSchema).min(1, "At least one user is required").max(500, "Maximum 500 users per batch");
 
 export { createUserSchema, bulkUserSchema };

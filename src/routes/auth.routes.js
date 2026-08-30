@@ -9,7 +9,7 @@ const router = Router();
 
 router.post("/login", loginLimiter, validate(loginSchema), login);
 router.post("/verify-otp", otpLimiter, validate(verifyOtpSchema), verifyOtp);
-router.post("/logout", logout);
+router.post("/logout", authenticate, logout);
 router.get("/me", authenticate, me);
 
 export default router;

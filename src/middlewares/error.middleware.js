@@ -33,7 +33,7 @@ const errorHandler = (err, req, res, _next) => {
 
   if (err.name === "CastError") {
     statusCode = 400;
-    message = `Invalid ${err.path}: ${err.value}`;
+    message = "Invalid ID format";
     return res.status(statusCode).json({ success: false, message, errors });
   }
 

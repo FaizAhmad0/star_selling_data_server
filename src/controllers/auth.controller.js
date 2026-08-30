@@ -1,6 +1,7 @@
 import * as authService from "../services/auth.service.js";
 import { sendSuccess } from "../utils/response.js";
 import asyncHandler from "../utils/async-handler.js";
+import { setCsrfCookie } from "../middlewares/csrf.middleware.js";
 
 export const login = asyncHandler(async (req, res) => {
   const { uid, password } = req.body;
@@ -10,6 +11,7 @@ export const login = asyncHandler(async (req, res) => {
   if (user.role === "user") {
     const token = authService.generateAuthToken(user);
     authService.setAuthCookie(res, token);
+    setCsrfCookie(res);
 
     return sendSuccess(res, {
       message: "Login successful",
@@ -30,6 +32,7 @@ export const verifyOtp = asyncHandler(async (req, res) => {
 
   const { user, token } = await authService.verifyOtp(uid, otp);
   authService.setAuthCookie(res, token);
+  setCsrfCookie(res);
 
   return sendSuccess(res, {
     message: "OTP verified and login successful",
@@ -37,8 +40,17 @@ export const verifyOtp = asyncHandler(async (req, res) => {
   });
 });
 
-export const logout = asyncHandler(async (_req, res) => {
+export const logout = asyncHandler(async (req, res) => {
+  if (req.user && req.user.id) {
+    await authService.invalidateSessions(req.user.id);
+  }
   authService.clearAuthCookie(res);
+  res.clearCookie("csrf_token", {
+    httpOnly: false,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+    path: "/",
+  });
 
   return sendSuccess(res, {
     message: "Logged out successfully",

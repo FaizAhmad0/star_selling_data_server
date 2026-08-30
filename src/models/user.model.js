@@ -70,16 +70,19 @@ const userSchema = new Schema(
     enrollmentIdAmazon: {
       type: String,
       unique: true,
+      sparse: true,
     },
 
     enrollmentIdWebsite: {
       type: String,
       unique: true,
+      sparse: true,
     },
 
     enrollmentIdEtsy: {
       type: String,
       unique: true,
+      sparse: true,
     },
 
     batchAmazon: {
@@ -96,6 +99,11 @@ const userSchema = new Schema(
 
     enrolledBy: {
       type: String,
+    },
+
+    tokenVersion: {
+      type: Number,
+      default: 0,
     },
 
   },

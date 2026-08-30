@@ -55,7 +55,7 @@ function parseExpiresIn(str) {
 }
 
 export function generateAuthToken(user) {
-  return jwt.sign({ id: user._id, role: user.role }, env.JWT_SECRET, {
+  return jwt.sign({ id: user._id, role: user.role, tokenVersion: user.tokenVersion }, env.JWT_SECRET, {
     expiresIn: env.JWT_EXPIRES_IN,
   });
 }
@@ -166,6 +166,10 @@ export async function getCurrentUser(userId) {
     throw new AppError("User not found", 401);
   }
   return formatUserData(user);
+}
+
+export async function invalidateSessions(userId) {
+  await User.findByIdAndUpdate(userId, { $inc: { tokenVersion: 1 } });
 }
 
 export function clearAuthCookie(res) {

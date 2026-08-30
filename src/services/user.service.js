@@ -1,4 +1,5 @@
 import User from "../models/user.model.js";
+import { getNextUid } from "../models/counter.model.js";
 
 const PLATFORM_MAP = {
   AZ: "amazon",
@@ -49,27 +50,6 @@ async function resolveManager(managerName, managerCache) {
   return manager;
 }
 
-async function getNextUid(managerCache) {
-  if (managerCache && managerCache._nextUid !== undefined) {
-    return managerCache._nextUid;
-  }
-
-  const lastUser = await User.findOne().sort({ uid: -1 }).select("uid").lean();
-  const nextUid = lastUser ? lastUser.uid + 1 : 1;
-
-  if (managerCache) {
-    managerCache._nextUid = nextUid;
-  }
-
-  return nextUid;
-}
-
-function incrementNextUid(managerCache) {
-  if (managerCache && managerCache._nextUid !== undefined) {
-    managerCache._nextUid += 1;
-  }
-}
-
 async function processUser(userData, managerCache) {
   const { name, email, enrollment, primaryContact, date, batch, manager, enrolledBy } = userData;
 
@@ -106,7 +86,7 @@ async function processUser(userData, managerCache) {
     return { status: "updated", user: stripPassword(existingUser) };
   }
 
-  const uid = await getNextUid(managerCache);
+  const uid = await getNextUid();
   const plainPassword = generatePassword(uid, name, primaryContact);
 
   const newUserData = {
@@ -130,7 +110,6 @@ async function processUser(userData, managerCache) {
   newUserData[dateField] = date;
 
   const newUser = await User.create(newUserData);
-  incrementNextUid(managerCache);
 
   return { status: "created", user: stripPassword(newUser) };
 }
@@ -142,7 +121,6 @@ export async function createUser(userData) {
 
 export async function bulkCreateUsers(usersData) {
   const managerCache = new Map();
-  managerCache._nextUid = undefined;
 
   const created = [];
   const updated = [];
