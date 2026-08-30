@@ -10,7 +10,10 @@ import authRoutes from "./routes/auth.routes.js";
 
 const app = express();
 
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: env.NODE_ENV === "production" ? undefined : false,
+  crossOriginEmbedderPolicy: env.NODE_ENV === "production",
+}));
 app.use(cors({ origin: env.CLIENT_URL, credentials: true }));
 app.use(cookieParser());
 app.use(express.json({ limit: "10mb" }));

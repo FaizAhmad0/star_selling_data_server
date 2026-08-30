@@ -41,8 +41,21 @@ function formatUserData(user) {
   };
 }
 
+function parseExpiresIn(str) {
+  const match = str.match(/^(\d+)([smhd])$/);
+  if (!match) return 7 * 24 * 60 * 60 * 1000;
+  const num = parseInt(match[1], 10);
+  switch (match[2]) {
+    case "s": return num * 1000;
+    case "m": return num * 60 * 1000;
+    case "h": return num * 60 * 60 * 1000;
+    case "d": return num * 24 * 60 * 60 * 1000;
+    default: return 7 * 24 * 60 * 60 * 1000;
+  }
+}
+
 export function generateAuthToken(user) {
-  return jwt.sign({ id: user._id }, env.JWT_SECRET, {
+  return jwt.sign({ id: user._id, role: user.role }, env.JWT_SECRET, {
     expiresIn: env.JWT_EXPIRES_IN,
   });
 }
@@ -53,7 +66,7 @@ export function setAuthCookie(res, token) {
     httpOnly: true,
     secure: isProduction,
     sameSite: isProduction ? "none" : "lax",
-    maxAge: 24 * 60 * 60 * 1000,
+    maxAge: parseExpiresIn(env.JWT_EXPIRES_IN),
     path: "/",
   });
 }
