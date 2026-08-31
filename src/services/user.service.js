@@ -13,9 +13,29 @@ function detectPlatform(enrollment) {
   return PLATFORM_MAP[prefix] || null;
 }
 
+const FIELD_MAP = {
+  amazon: {
+    enrollmentId: "enrollmentIdAmazon",
+    Manager: "amazonManager",
+    batch: "batchAmazon",
+    date: "dateAmazon",
+  },
+  website: {
+    enrollmentId: "enrollmentIdWebsite",
+    Manager: "websiteManager",
+    batch: "batchWebsite",
+    date: "dateWebsite",
+  },
+  etsy: {
+    enrollmentId: "enrollmentIdEtsy",
+    Manager: "etsyManager",
+    batch: "batchEtsy",
+    date: "dateEtsy",
+  },
+};
+
 function buildFieldName(platform, field) {
-  const suffix = platform.charAt(0).toUpperCase() + platform.slice(1);
-  return `${field}${suffix}`;
+  return FIELD_MAP[platform]?.[field] ?? `${field}${platform.charAt(0).toUpperCase() + platform.slice(1)}`;
 }
 
 function generatePassword(uid, name, primaryContact) {
@@ -114,9 +134,130 @@ async function processUser(userData, managerCache) {
   return { status: "created", user: stripPassword(newUser) };
 }
 
+export async function getUsers({ page, limit, search, manager, batch, status, joiningDate }) {
+  const filter = { role: "user" };
+
+  if (search) {
+    const regex = new RegExp(search, "i");
+    filter.$or = [
+      { name: regex },
+      { email: regex },
+      { primaryContact: regex },
+      { enrollmentIdAmazon: regex },
+      { enrollmentIdWebsite: regex },
+      { enrollmentIdEtsy: regex },
+    ];
+  }
+
+  if (manager) {
+    const managerDocs = await User.find({ name: new RegExp(manager, "i"), role: "manager" }).select("_id");
+    const managerIds = managerDocs.map((m) => m._id);
+    if (managerIds.length > 0) {
+      filter.$and = filter.$and || [];
+      filter.$and.push({
+        $or: [
+          { amazonManager: { $in: managerIds } },
+          { websiteManager: { $in: managerIds } },
+          { etsyManager: { $in: managerIds } },
+        ],
+      });
+    } else {
+      filter.$and = filter.$and || [];
+      filter.$and.push({ _id: { $in: [] } });
+    }
+  }
+
+  if (batch) {
+    const batchRegex = new RegExp(batch, "i");
+    filter.$and = filter.$and || [];
+    filter.$and.push({
+      $or: [
+        { batchAmazon: batchRegex },
+        { batchWebsite: batchRegex },
+        { batchEtsy: batchRegex },
+      ],
+    });
+  }
+
+  if (status === "active") {
+    filter.tokenVersion = { $gte: 0 };
+  } else if (status === "inactive") {
+    filter.tokenVersion = -1;
+  }
+
+  if (joiningDate) {
+    const dateRegex = new RegExp(joiningDate, "i");
+    filter.$and = filter.$and || [];
+    filter.$and.push({
+      $or: [
+        { dateAmazon: dateRegex },
+        { dateWebsite: dateRegex },
+        { dateEtsy: dateRegex },
+      ],
+    });
+  }
+
+  const skip = (page - 1) * limit;
+
+  const [users, total] = await Promise.all([
+    User.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("amazonManager", "name email")
+      .populate("websiteManager", "name email")
+      .populate("etsyManager", "name email")
+      .lean(),
+    User.countDocuments(filter),
+  ]);
+
+  return {
+    data: users,
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
+
 export async function createUser(userData) {
   const result = await processUser(userData, null);
   return result;
+}
+
+export async function deleteUser(id) {
+  const user = await User.findOneAndDelete({ _id: id, role: "user" });
+  return user;
+}
+
+export async function updateUser(id, { name, email, primaryContact }) {
+  const user = await User.findOne({ _id: id, role: "user" });
+  if (!user) return null;
+
+  if (email && email !== user.email) {
+    const existing = await User.findOne({ email, _id: { $ne: id } });
+    if (existing) return { status: "conflict", reason: "A user with this email already exists" };
+  }
+
+  if (primaryContact && primaryContact !== user.primaryContact) {
+    const existing = await User.findOne({ primaryContact, _id: { $ne: id } });
+    if (existing) return { status: "conflict", reason: "A user with this phone number already exists" };
+  }
+
+  const update = {};
+  if (name) update.name = name;
+  if (email) update.email = email;
+  if (primaryContact) update.primaryContact = primaryContact;
+
+  const updated = await User.findOneAndUpdate(
+    { _id: id, role: "user" },
+    update,
+    { new: true }
+  ).select("-password -tokenVersion");
+
+  return { status: "updated", data: updated };
 }
 
 export async function bulkCreateUsers(usersData) {

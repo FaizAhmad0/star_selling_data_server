@@ -13,4 +13,14 @@ const createUserSchema = z.object({
 
 const bulkUserSchema = z.array(createUserSchema).min(1, "At least one user is required").max(500, "Maximum 500 users per batch");
 
-export { createUserSchema, bulkUserSchema };
+const userQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  search: z.string().optional(),
+  manager: z.string().optional(),
+  batch: z.string().optional(),
+  status: z.enum(["active", "inactive"]).optional(),
+  joiningDate: z.string().optional(),
+});
+
+export { createUserSchema, bulkUserSchema, userQuerySchema };
