@@ -159,7 +159,7 @@ async function processUser(userData, managerCache) {
   return { status: "created", user: stripPassword(newUser) };
 }
 
-export async function getUsers({ page, limit, search, manager, batch, status, joiningDate }) {
+export async function getUsers({ page, limit, search, manager, batch, status, joiningDate, platform }) {
   const filter = { role: "user" };
 
   if (search) {
@@ -174,18 +174,37 @@ export async function getUsers({ page, limit, search, manager, batch, status, jo
     ];
   }
 
+  if (platform) {
+    const platformFieldMap = {
+      amazon: "enrollmentIdAmazon",
+      website: "enrollmentIdWebsite",
+      etsy: "enrollmentIdEtsy",
+    };
+    const field = platformFieldMap[platform.toLowerCase()];
+    if (field) {
+      filter[field] = { $type: "string" };
+    }
+  }
+
   if (manager) {
     const managerDocs = await User.find({ name: new RegExp(manager, "i"), role: "manager" }).select("_id");
     const managerIds = managerDocs.map((m) => m._id);
     if (managerIds.length > 0) {
       filter.$and = filter.$and || [];
-      filter.$and.push({
-        $or: [
-          { amazonManager: { $in: managerIds } },
-          { websiteManager: { $in: managerIds } },
-          { etsyManager: { $in: managerIds } },
-        ],
-      });
+      const managerFilter = platform === "amazon"
+        ? { amazonManager: { $in: managerIds } }
+        : platform === "website"
+        ? { websiteManager: { $in: managerIds } }
+        : platform === "etsy"
+        ? { etsyManager: { $in: managerIds } }
+        : {
+            $or: [
+              { amazonManager: { $in: managerIds } },
+              { websiteManager: { $in: managerIds } },
+              { etsyManager: { $in: managerIds } },
+            ],
+          };
+      filter.$and.push(managerFilter);
     } else {
       filter.$and = filter.$and || [];
       filter.$and.push({ _id: { $in: [] } });
@@ -195,13 +214,21 @@ export async function getUsers({ page, limit, search, manager, batch, status, jo
   if (batch) {
     const batchRegex = new RegExp(batch, "i");
     filter.$and = filter.$and || [];
-    filter.$and.push({
-      $or: [
-        { batchAmazon: batchRegex },
-        { batchWebsite: batchRegex },
-        { batchEtsy: batchRegex },
-      ],
-    });
+    if (platform === "amazon") {
+      filter.$and.push({ batchAmazon: batchRegex });
+    } else if (platform === "website") {
+      filter.$and.push({ batchWebsite: batchRegex });
+    } else if (platform === "etsy") {
+      filter.$and.push({ batchEtsy: batchRegex });
+    } else {
+      filter.$and.push({
+        $or: [
+          { batchAmazon: batchRegex },
+          { batchWebsite: batchRegex },
+          { batchEtsy: batchRegex },
+        ],
+      });
+    }
   }
 
   if (status === "active") {
@@ -213,13 +240,21 @@ export async function getUsers({ page, limit, search, manager, batch, status, jo
   if (joiningDate) {
     const dateRegex = new RegExp(joiningDate, "i");
     filter.$and = filter.$and || [];
-    filter.$and.push({
-      $or: [
-        { dateAmazon: dateRegex },
-        { dateWebsite: dateRegex },
-        { dateEtsy: dateRegex },
-      ],
-    });
+    if (platform === "amazon") {
+      filter.$and.push({ dateAmazon: dateRegex });
+    } else if (platform === "website") {
+      filter.$and.push({ dateWebsite: dateRegex });
+    } else if (platform === "etsy") {
+      filter.$and.push({ dateEtsy: dateRegex });
+    } else {
+      filter.$and.push({
+        $or: [
+          { dateAmazon: dateRegex },
+          { dateWebsite: dateRegex },
+          { dateEtsy: dateRegex },
+        ],
+      });
+    }
   }
 
   const skip = (page - 1) * limit;
