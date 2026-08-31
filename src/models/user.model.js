@@ -69,20 +69,14 @@ const userSchema = new Schema(
 
     enrollmentIdAmazon: {
       type: String,
-      unique: true,
-      sparse: true,
     },
 
     enrollmentIdWebsite: {
       type: String,
-      unique: true,
-      sparse: true,
     },
 
     enrollmentIdEtsy: {
       type: String,
-      unique: true,
-      sparse: true,
     },
 
     batchAmazon: {
@@ -105,12 +99,15 @@ const userSchema = new Schema(
       type: Number,
       default: 0,
     },
-
   },
   {
     timestamps: true,
   },
 );
+
+userSchema.index({ enrollmentIdAmazon: 1 }, { unique: true, partialFilterExpression: { enrollmentIdAmazon: { $type: "string" } } });
+userSchema.index({ enrollmentIdWebsite: 1 }, { unique: true, partialFilterExpression: { enrollmentIdWebsite: { $type: "string" } } });
+userSchema.index({ enrollmentIdEtsy: 1 }, { unique: true, partialFilterExpression: { enrollmentIdEtsy: { $type: "string" } } });
 
 const User = mongoose.model("User", userSchema);
 
