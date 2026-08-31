@@ -226,6 +226,7 @@ export async function getUsers({ page, limit, search, manager, batch, status, jo
 
   const [users, total] = await Promise.all([
     User.find(filter)
+      .select("+password")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
