@@ -23,7 +23,7 @@ export async function getManagers({ page, limit, search, status }) {
 
   const [managers, total] = await Promise.all([
     User.find(filter)
-      .select("-password -tokenVersion")
+      .select("+password")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -64,7 +64,7 @@ export async function createManager({ name, email, primaryContact, password }) {
     password,
   });
 
-  const { password: _pw, tokenVersion, ...managerData } = manager.toObject();
+  const { password: _, tokenVersion: __, ...managerData } = manager.toObject();
 
   return { status: "created", data: managerData };
 }
