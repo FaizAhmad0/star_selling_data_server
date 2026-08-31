@@ -3,11 +3,13 @@ import {
   getManagers,
   getManagerById,
   createManager,
+  updateManager,
+  changeManagerPassword,
   updateManagerStatus,
   deleteManager,
 } from "../controllers/manager.controller.js";
 import validate from "../middlewares/validate.middleware.js";
-import { createManagerSchema } from "../schemas/manager.schema.js";
+import { createManagerSchema, updateManagerSchema, changePasswordSchema } from "../schemas/manager.schema.js";
 import authenticate from "../middlewares/auth.middleware.js";
 import authorize from "../middlewares/authorize.middleware.js";
 
@@ -23,6 +25,8 @@ router.post(
   authorize("admin"),
   createManager,
 );
+router.put("/:id", validate(updateManagerSchema), authorize("admin"), updateManager);
+router.patch("/:id/password", validate(changePasswordSchema), authorize("admin"), changeManagerPassword);
 router.patch("/:id/status", authorize("admin"), updateManagerStatus);
 router.delete("/:id", authorize("admin"), deleteManager);
 

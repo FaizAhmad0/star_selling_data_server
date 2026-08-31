@@ -93,6 +93,48 @@ export async function deleteManager(id) {
   return manager;
 }
 
+export async function updateManager(id, { name, email, primaryContact }) {
+  const manager = await User.findOne({ _id: id, role: "manager" });
+  if (!manager) return null;
+
+  if (email && email !== manager.email) {
+    const existing = await User.findOne({ email, _id: { $ne: id } });
+    if (existing) {
+      return { status: "conflict", reason: "A user with this email already exists" };
+    }
+  }
+
+  if (primaryContact && primaryContact !== manager.primaryContact) {
+    const existing = await User.findOne({ primaryContact, _id: { $ne: id } });
+    if (existing) {
+      return { status: "conflict", reason: "A user with this phone number already exists" };
+    }
+  }
+
+  const update = {};
+  if (name) update.name = name;
+  if (email) update.email = email;
+  if (primaryContact) update.primaryContact = primaryContact;
+
+  const updated = await User.findOneAndUpdate(
+    { _id: id, role: "manager" },
+    update,
+    { new: true }
+  ).select("-password -tokenVersion");
+
+  return { status: "updated", data: updated };
+}
+
+export async function changeManagerPassword(id, password) {
+  const manager = await User.findOne({ _id: id, role: "manager" });
+  if (!manager) return null;
+
+  manager.password = password;
+  await manager.save();
+
+  return { status: "updated" };
+}
+
 export async function countManagers() {
   return User.countDocuments({ role: "manager" });
 }

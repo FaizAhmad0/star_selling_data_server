@@ -45,6 +45,38 @@ export const createManager = asyncHandler(async (req, res) => {
   });
 });
 
+export const updateManager = asyncHandler(async (req, res) => {
+  const result = await managerService.updateManager(req.params.id, req.body);
+
+  if (!result) {
+    return sendError(res, { message: "Manager not found", statusCode: 404 });
+  }
+
+  if (result.status === "conflict") {
+    return sendError(res, { message: result.reason, statusCode: 409 });
+  }
+
+  return sendSuccess(res, {
+    message: "Manager updated successfully",
+    data: result.data,
+  });
+});
+
+export const changeManagerPassword = asyncHandler(async (req, res) => {
+  const result = await managerService.changeManagerPassword(
+    req.params.id,
+    req.body.password
+  );
+
+  if (!result) {
+    return sendError(res, { message: "Manager not found", statusCode: 404 });
+  }
+
+  return sendSuccess(res, {
+    message: "Password updated successfully",
+  });
+});
+
 export const updateManagerStatus = asyncHandler(async (req, res) => {
   const manager = await managerService.updateManagerStatus(
     req.params.id,
