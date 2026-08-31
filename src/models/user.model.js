@@ -96,6 +96,13 @@ const userSchema = new Schema(
       ref: "Platform",
     },
 
+    platforms: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "Platform",
+      },
+    ],
+
     enrolledBy: {
       type: String,
     },

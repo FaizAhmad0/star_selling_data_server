@@ -1,4 +1,5 @@
 import * as userService from "../services/user.service.js";
+import User from "../models/user.model.js";
 import { sendSuccess, sendError } from "../utils/response.js";
 import asyncHandler from "../utils/async-handler.js";
 
@@ -17,9 +18,10 @@ export const getUsers = asyncHandler(async (req, res) => {
 });
 
 export const getUserById = asyncHandler(async (req, res) => {
-  const user = await import("mongoose").then((m) =>
-    m.default.findOne({ _id: req.params.id, role: "user" }).select("-password -tokenVersion").lean()
-  );
+  const user = await User.findOne({ _id: req.params.id, role: "user" })
+    .select("-password -tokenVersion")
+    .populate("platforms", "name status")
+    .lean();
   if (!user) return sendError(res, { message: "User not found", statusCode: 404 });
   return sendSuccess(res, { message: "User retrieved successfully", data: user });
 });

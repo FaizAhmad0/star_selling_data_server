@@ -11,6 +11,13 @@ const createUserSchema = z.object({
   enrolledBy: z.string().optional(),
 });
 
+const updateUserSchema = z.object({
+  name: z.string().min(1, "Name is required").max(100, "Name is too long").optional(),
+  email: z.string().email("Invalid email address").optional(),
+  primaryContact: z.string().min(1, "Phone number is required").optional(),
+  platforms: z.array(z.string()).optional(),
+});
+
 const bulkUserSchema = z.array(createUserSchema).min(1, "At least one user is required").max(500, "Maximum 500 users per batch");
 
 const userQuerySchema = z.object({
@@ -23,4 +30,4 @@ const userQuerySchema = z.object({
   joiningDate: z.string().optional(),
 });
 
-export { createUserSchema, bulkUserSchema, userQuerySchema };
+export { createUserSchema, updateUserSchema, bulkUserSchema, userQuerySchema };

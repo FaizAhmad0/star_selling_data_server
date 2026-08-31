@@ -1,4 +1,5 @@
 import User from "../models/user.model.js";
+import Platform from "../models/platform.model.js";
 import { getNextUid } from "../models/counter.model.js";
 
 const PLATFORM_MAP = {
@@ -8,9 +9,22 @@ const PLATFORM_MAP = {
   ET: "etsy",
 };
 
+const PLATFORM_NAME_MAP = {
+  amazon: "Amazon",
+  website: "Website",
+  etsy: "Etsy",
+};
+
 function detectPlatform(enrollment) {
   const prefix = enrollment.slice(0, 2).toUpperCase();
   return PLATFORM_MAP[prefix] || null;
+}
+
+async function resolvePlatformIds(platformKey) {
+  const platformName = PLATFORM_NAME_MAP[platformKey];
+  if (!platformName) return [];
+  const platform = await Platform.findOne({ name: platformName, status: "active" }).select("_id");
+  return platform ? [platform._id] : [];
 }
 
 const FIELD_MAP = {
@@ -85,6 +99,8 @@ async function processUser(userData, managerCache) {
     return { status: "skipped", reason: err.message };
   }
 
+  const platformIds = await resolvePlatformIds(platform);
+
   const existingUser = await User.findOne({ primaryContact });
 
   if (existingUser) {
@@ -102,6 +118,14 @@ async function processUser(userData, managerCache) {
     existingUser[batchField] = batch;
     existingUser[dateField] = date;
 
+    if (platformIds.length > 0) {
+      const existingPlatformIds = (existingUser.platforms || []).map((id) => id.toString());
+      const newIds = platformIds.filter((id) => !existingPlatformIds.includes(id.toString()));
+      if (newIds.length > 0) {
+        existingUser.platforms = [...(existingUser.platforms || []), ...newIds];
+      }
+    }
+
     await existingUser.save();
     return { status: "updated", user: stripPassword(existingUser) };
   }
@@ -117,6 +141,7 @@ async function processUser(userData, managerCache) {
     password: plainPassword,
     enrolledBy,
     role: "user",
+    platforms: platformIds,
   };
 
   const enrollmentField = buildFieldName(platform, "enrollmentId");
@@ -207,6 +232,7 @@ export async function getUsers({ page, limit, search, manager, batch, status, jo
       .populate("amazonManager", "name email")
       .populate("websiteManager", "name email")
       .populate("etsyManager", "name email")
+      .populate("platforms", "name status")
       .lean(),
     User.countDocuments(filter),
   ]);
@@ -232,7 +258,7 @@ export async function deleteUser(id) {
   return user;
 }
 
-export async function updateUser(id, { name, email, primaryContact }) {
+export async function updateUser(id, { name, email, primaryContact, platforms }) {
   const user = await User.findOne({ _id: id, role: "user" });
   if (!user) return null;
 
@@ -250,12 +276,15 @@ export async function updateUser(id, { name, email, primaryContact }) {
   if (name) update.name = name;
   if (email) update.email = email;
   if (primaryContact) update.primaryContact = primaryContact;
+  if (platforms !== undefined) update.platforms = platforms;
 
   const updated = await User.findOneAndUpdate(
     { _id: id, role: "user" },
     update,
     { new: true }
-  ).select("-password -tokenVersion");
+  )
+    .select("-password -tokenVersion")
+    .populate("platforms", "name status");
 
   return { status: "updated", data: updated };
 }
