@@ -8,6 +8,7 @@ import errorHandler from "./middlewares/error.middleware.js";
 import userRoutes from "./routes/user.routes.js";
 import managerRoutes from "./routes/manager.routes.js";
 import supervisorRoutes from "./routes/supervisor.routes.js";
+import platformRoutes from "./routes/platform.routes.js";
 import authRoutes from "./routes/auth.routes.js";
 import { csrfProtection } from "./middlewares/csrf.middleware.js";
 
@@ -33,6 +34,7 @@ app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/users", csrfProtection, userRoutes);
 app.use("/api/v1/managers", csrfProtection, managerRoutes);
 app.use("/api/v1/supervisors", csrfProtection, supervisorRoutes);
+app.use("/api/v1/platforms", csrfProtection, platformRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

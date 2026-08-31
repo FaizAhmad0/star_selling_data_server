@@ -5,12 +5,14 @@ const createManagerSchema = z.object({
   email: z.string().email("Invalid email address"),
   primaryContact: z.string().min(1, "Phone number is required"),
   password: z.string().min(6, "Password must be at least 6 characters"),
+  platform: z.string().optional(),
 });
 
 const updateManagerSchema = z.object({
   name: z.string().min(1, "Name is required").max(100, "Name is too long").optional(),
   email: z.string().email("Invalid email address").optional(),
   primaryContact: z.string().min(1, "Phone number is required").optional(),
+  platform: z.string().optional(),
 });
 
 const changePasswordSchema = z.object({

@@ -24,6 +24,7 @@ export async function getManagers({ page, limit, search, status }) {
   const [managers, total] = await Promise.all([
     User.find(filter)
       .select("+password")
+      .populate("platform", "name status")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -42,7 +43,7 @@ export async function getManagers({ page, limit, search, status }) {
   };
 }
 
-export async function createManager({ name, email, primaryContact, password }) {
+export async function createManager({ name, email, primaryContact, password, platform }) {
   const existingEmail = await User.findOne({ email });
   if (existingEmail) {
     return { status: "conflict", reason: "A user with this email already exists" };
@@ -55,23 +56,30 @@ export async function createManager({ name, email, primaryContact, password }) {
 
   const uid = await getNextUid();
 
-  const manager = await User.create({
+  const managerData = {
     uid,
     name,
     email,
     primaryContact,
     role: "manager",
     password,
-  });
+  };
 
-  const { password: _, tokenVersion: __, ...managerData } = manager.toObject();
+  if (platform) {
+    managerData.platform = platform;
+  }
 
-  return { status: "created", data: managerData };
+  const manager = await User.create(managerData);
+
+  const { password: _, tokenVersion: __, ...managerSafe } = manager.toObject();
+
+  return { status: "created", data: managerSafe };
 }
 
 export async function getManagerById(id) {
   const manager = await User.findOne({ _id: id, role: "manager" })
     .select("-password -tokenVersion")
+    .populate("platform", "name status")
     .lean();
 
   return manager;
@@ -93,7 +101,7 @@ export async function deleteManager(id) {
   return manager;
 }
 
-export async function updateManager(id, { name, email, primaryContact }) {
+export async function updateManager(id, { name, email, primaryContact, platform }) {
   const manager = await User.findOne({ _id: id, role: "manager" });
   if (!manager) return null;
 
@@ -115,12 +123,15 @@ export async function updateManager(id, { name, email, primaryContact }) {
   if (name) update.name = name;
   if (email) update.email = email;
   if (primaryContact) update.primaryContact = primaryContact;
+  if (platform !== undefined) update.platform = platform || null;
 
   const updated = await User.findOneAndUpdate(
     { _id: id, role: "manager" },
     update,
     { new: true }
-  ).select("-password -tokenVersion");
+  )
+    .select("-password -tokenVersion")
+    .populate("platform", "name status");
 
   return { status: "updated", data: updated };
 }
