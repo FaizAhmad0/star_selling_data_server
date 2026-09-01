@@ -13,6 +13,7 @@ export const getUsers = asyncHandler(async (req, res) => {
     batch,
     status,
     joiningDate,
+    currentUser: req.user,
   });
   return sendSuccess(res, { message: "Users retrieved successfully", data: result });
 });

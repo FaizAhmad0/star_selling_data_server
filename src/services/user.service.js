@@ -159,8 +159,19 @@ async function processUser(userData, managerCache) {
   return { status: "created", user: stripPassword(newUser) };
 }
 
-export async function getUsers({ page, limit, search, manager, batch, status, joiningDate, platform }) {
+export async function getUsers({ page, limit, search, manager, batch, status, joiningDate, platform, currentUser }) {
   const filter = { role: "user" };
+
+  if (currentUser && currentUser.role === "manager") {
+    filter.$and = filter.$and || [];
+    filter.$and.push({
+      $or: [
+        { amazonManager: currentUser.id },
+        { websiteManager: currentUser.id },
+        { etsyManager: currentUser.id },
+      ],
+    });
+  }
 
   if (search) {
     const regex = new RegExp(search, "i");
