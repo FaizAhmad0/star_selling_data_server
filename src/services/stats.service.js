@@ -219,6 +219,168 @@ export async function getAdminStats() {
   };
 }
 
+export async function getManagerStats(managerId) {
+  const managerFilter = {
+    $or: [
+      { amazonManager: managerId },
+      { websiteManager: managerId },
+      { etsyManager: managerId },
+    ],
+  };
+
+  const baseFilter = { role: "user", ...managerFilter };
+
+  const [
+    totalUsers,
+    activeUsers,
+    inactiveUsers,
+    usersByPlatform,
+    recentUsers,
+    monthlyGrowth,
+    enrollmentsByMonth,
+  ] = await Promise.all([
+    User.countDocuments(baseFilter),
+    User.countDocuments({ ...baseFilter, tokenVersion: { $gte: 0 } }),
+    User.countDocuments({ ...baseFilter, tokenVersion: -1 }),
+    User.aggregate([
+      { $match: baseFilter },
+      {
+        $facet: {
+          amazon: [
+            { $match: { enrollmentIdAmazon: { $type: "string" } } },
+            { $count: "count" },
+          ],
+          website: [
+            { $match: { enrollmentIdWebsite: { $type: "string" } } },
+            { $count: "count" },
+          ],
+          etsy: [
+            { $match: { enrollmentIdEtsy: { $type: "string" } } },
+            { $count: "count" },
+          ],
+        },
+      },
+    ]),
+    User.find(baseFilter)
+      .select("name email enrollmentIdAmazon enrollmentIdWebsite enrollmentIdEtsy createdAt")
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .lean(),
+    (async () => {
+      const now = new Date();
+      const months = [];
+      for (let i = 11; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        months.push({
+          month: d.toISOString().slice(0, 7),
+          label: d.toLocaleString("default", { month: "short", year: "2-digit" }),
+        });
+      }
+
+      const results = await User.aggregate([
+        { $match: baseFilter },
+        {
+          $group: {
+            _id: {
+              $dateToString: { format: "%Y-%m", date: "$createdAt" },
+            },
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+      const countMap = {};
+      results.forEach((r) => { countMap[r._id] = r.count; });
+
+      return months.map((m) => ({
+        month: m.month,
+        label: m.label,
+        count: countMap[m.month] || 0,
+      }));
+    })(),
+    (async () => {
+      const now = new Date();
+      const months = [];
+      for (let i = 11; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        months.push({
+          month: d.toISOString().slice(0, 7),
+          label: d.toLocaleString("default", { month: "short", year: "2-digit" }),
+        });
+      }
+
+      const results = await User.aggregate([
+        { $match: baseFilter },
+        {
+          $project: {
+            monthAmazon: {
+              $cond: [{ $type: "$dateAmazon" }, { $substrCP: ["$dateAmazon", 0, 7] }, null],
+            },
+            monthWebsite: {
+              $cond: [{ $type: "$dateWebsite" }, { $substrCP: ["$dateWebsite", 0, 7] }, null],
+            },
+            monthEtsy: {
+              $cond: [{ $type: "$dateEtsy" }, { $substrCP: ["$dateEtsy", 0, 7] }, null],
+            },
+          },
+        },
+        {
+          $facet: {
+            amazon: [
+              { $match: { monthAmazon: { $ne: null } } },
+              { $group: { _id: "$monthAmazon", count: { $sum: 1 } } },
+            ],
+            website: [
+              { $match: { monthWebsite: { $ne: null } } },
+              { $group: { _id: "$monthWebsite", count: { $sum: 1 } } },
+            ],
+            etsy: [
+              { $match: { monthEtsy: { $ne: null } } },
+              { $group: { _id: "$monthEtsy", count: { $sum: 1 } } },
+            ],
+          },
+        },
+      ]);
+
+      const amzMap = {};
+      const wbMap = {};
+      const etsyMap = {};
+      results[0].amazon.forEach((r) => { amzMap[r._id] = r.count; });
+      results[0].website.forEach((r) => { wbMap[r._id] = r.count; });
+      results[0].etsy.forEach((r) => { etsyMap[r._id] = r.count; });
+
+      return months.map((m) => ({
+        month: m.month,
+        label: m.label,
+        amazon: amzMap[m.month] || 0,
+        website: wbMap[m.month] || 0,
+        etsy: etsyMap[m.month] || 0,
+      }));
+    })(),
+  ]);
+
+  const platformData = usersByPlatform[0] || {};
+  const totalEnrollments =
+    (platformData.amazon?.[0]?.count || 0) +
+    (platformData.website?.[0]?.count || 0) +
+    (platformData.etsy?.[0]?.count || 0);
+
+  return {
+    totalUsers,
+    activeUsers,
+    inactiveUsers,
+    totalEnrollments,
+    usersByPlatform: {
+      amazon: platformData.amazon?.[0]?.count || 0,
+      website: platformData.website?.[0]?.count || 0,
+      etsy: platformData.etsy?.[0]?.count || 0,
+    },
+    recentUsers,
+    monthlyGrowth,
+    enrollmentsByMonth,
+  };
+}
+
 export async function getPlatformStats(platform) {
   const fields = PLATFORM_FIELD_MAP[platform];
   if (!fields) return null;

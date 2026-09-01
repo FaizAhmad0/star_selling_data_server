@@ -7,6 +7,11 @@ export const getAdminStats = asyncHandler(async (req, res) => {
   return sendSuccess(res, { message: "Admin stats retrieved successfully", data: result });
 });
 
+export const getManagerStats = asyncHandler(async (req, res) => {
+  const result = await statsService.getManagerStats(req.user.id);
+  return sendSuccess(res, { message: "Manager stats retrieved successfully", data: result });
+});
+
 export const getPlatformStats = asyncHandler(async (req, res) => {
   const { platform } = req.params;
   if (!["amazon", "website", "etsy"].includes(platform)) {
