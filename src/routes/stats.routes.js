@@ -7,8 +7,12 @@ const router = Router();
 
 router.use(authenticate);
 
-router.get("/admin", authorize("admin"), getAdminStats);
-router.get("/admin/platform/:platform", authorize("admin"), getPlatformStats);
+router.get("/admin", authorize("admin", "supervisor"), getAdminStats);
+router.get(
+  "/admin/platform/:platform",
+  authorize("admin", "supervisor"),
+  getPlatformStats,
+);
 router.get("/manager", authorize("manager"), getManagerStats);
 
 export default router;
