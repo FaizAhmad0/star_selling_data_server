@@ -11,6 +11,7 @@ import supervisorRoutes from "./routes/supervisor.routes.js";
 import platformRoutes from "./routes/platform.routes.js";
 import authRoutes from "./routes/auth.routes.js";
 import statsRoutes from "./routes/stats.routes.js";
+import webhookRoutes from "./routes/webhook.routes.js";
 import { csrfProtection } from "./middlewares/csrf.middleware.js";
 
 const app = express();
@@ -37,6 +38,8 @@ app.use("/api/v1/users", csrfProtection, userRoutes);
 app.use("/api/v1/managers", csrfProtection, managerRoutes);
 app.use("/api/v1/supervisors", csrfProtection, supervisorRoutes);
 app.use("/api/v1/platforms", csrfProtection, platformRoutes);
+
+app.use("/webhook", webhookRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

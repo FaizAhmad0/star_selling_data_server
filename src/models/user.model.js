@@ -143,8 +143,8 @@ const userSchema = new Schema(
       default: "Not Sent",
     },
     haveGst: {
-      type: Boolean,
-      default: false,
+      type: String,
+      default: "NO",
     },
     furtherProcedureRecoding: {
       type: String,
