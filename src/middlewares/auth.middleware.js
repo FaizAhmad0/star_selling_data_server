@@ -24,6 +24,8 @@ const authenticate = async (req, res, next) => {
       .select("role +tokenVersion")
       .lean();
 
+    console.log(user)
+
     if (!user) {
       return next(new AppError("User no longer exists", 401));
     }
