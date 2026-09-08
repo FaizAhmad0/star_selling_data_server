@@ -15,6 +15,7 @@ import webhookRoutes from "./routes/webhook.routes.js";
 import { csrfProtection } from "./middlewares/csrf.middleware.js";
 
 const app = express();
+app.set("trust proxy", "loopback");
 
 app.use(helmet({
   contentSecurityPolicy: env.NODE_ENV === "production" ? undefined : false,
