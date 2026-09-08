@@ -27,6 +27,12 @@ const authenticate = async (req, res, next) => {
     if (!user) {
       return next(new AppError("User no longer exists", 401));
     }
+    console.log("SESSION_VERSION_CHECK", {
+      databaseVersion: user.tokenVersion,
+      databaseType: typeof user.tokenVersion,
+      jwtVersion: decoded.tokenVersion,
+      jwtType: typeof decoded.tokenVersion,
+    });
 
     if (
       !Number.isInteger(user.tokenVersion) ||
