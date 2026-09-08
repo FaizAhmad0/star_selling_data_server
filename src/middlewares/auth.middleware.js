@@ -21,8 +21,6 @@ const authenticate = async (req, res, next) => {
     const decoded = await verifyToken(token);
 
     const user = await User.findById(decoded.id)
-      .select("role +tokenVersion")
-      .lean();
 
     console.log(user)
 
