@@ -22,16 +22,15 @@ const authenticate = async (req, res, next) => {
 
     const user = await User.findById(decoded.id)
 
-    console.log(user)
+    // console.log(user)
 
     if (!user) {
       return next(new AppError("User no longer exists", 401));
     }
-    console.log("SESSION_VERSION_CHECK", {
-      databaseVersion: user.tokenVersion,
-      databaseType: typeof user.tokenVersion,
-      jwtVersion: decoded.tokenVersion,
-      jwtType: typeof decoded.tokenVersion,
+    console.log("AUTH_REQUEST", {
+      method: req.method,
+      url: req.originalUrl,
+      time: new Date().toISOString(),
     });
 
     if (
