@@ -46,28 +46,55 @@ function parseExpiresIn(str) {
   if (!match) return 7 * 24 * 60 * 60 * 1000;
   const num = parseInt(match[1], 10);
   switch (match[2]) {
-    case "s": return num * 1000;
-    case "m": return num * 60 * 1000;
-    case "h": return num * 60 * 60 * 1000;
-    case "d": return num * 24 * 60 * 60 * 1000;
-    default: return 7 * 24 * 60 * 60 * 1000;
+    case "s":
+      return num * 1000;
+    case "m":
+      return num * 60 * 1000;
+    case "h":
+      return num * 60 * 60 * 1000;
+    case "d":
+      return num * 24 * 60 * 60 * 1000;
+    default:
+      return 7 * 24 * 60 * 60 * 1000;
   }
 }
 
 export function generateAuthToken(user) {
-  return jwt.sign({ id: user._id, role: user.role, tokenVersion: user.tokenVersion }, env.JWT_SECRET, {
-    expiresIn: env.JWT_EXPIRES_IN,
-  });
+  return jwt.sign(
+    { id: user._id, role: user.role, tokenVersion: user.tokenVersion },
+    env.JWT_SECRET,
+    {
+      expiresIn: env.JWT_EXPIRES_IN,
+    },
+  );
 }
 
-export function setAuthCookie(res, token) {
+// export function setAuthCookie(res, token) {
+//   const isProduction = env.NODE_ENV === "production";
+//   res.cookie("token", token, {
+//     httpOnly: true,
+//     secure: isProduction,
+//     sameSite: isProduction ? "none" : "lax",
+//     maxAge: parseExpiresIn(env.JWT_EXPIRES_IN),
+//     path: "/",
+//   });
+// }
+
+function getAuthCookieOptions() {
   const isProduction = env.NODE_ENV === "production";
-  res.cookie("token", token, {
+
+  return {
     httpOnly: true,
     secure: isProduction,
-    sameSite: isProduction ? "none" : "lax",
-    maxAge: parseExpiresIn(env.JWT_EXPIRES_IN),
+    sameSite: "lax",
     path: "/",
+    ...(isProduction ? { domain: "starsellingz.com" } : {}),
+  };
+}
+export function setAuthCookie(res, token) {
+  res.cookie("token", token, {
+    ...getAuthCookieOptions(),
+    maxAge: parseExpiresIn(env.JWT_EXPIRES_IN),
   });
 }
 
@@ -125,8 +152,9 @@ export async function generateOtp(user) {
 
   try {
     await transporter.sendMail(mailOptions);
-  } catch (_err) {
-    console.error("Failed to send OTP email:", _err.message);
+  } catch (err) {
+    console.error("Failed to send OTP email:", err.message);
+    throw new AppError("Unable to send OTP. Please try again.", 503);
   }
 }
 
@@ -173,12 +201,7 @@ export async function invalidateSessions(userId) {
 }
 
 export function clearAuthCookie(res) {
-  res.clearCookie("token", {
-    httpOnly: true,
-    secure: env.NODE_ENV === "production",
-    sameSite: env.NODE_ENV === "production" ? "none" : "lax",
-    path: "/",
-  });
+  res.clearCookie("token", getAuthCookieOptions());
 }
 
 export { formatUserData };
