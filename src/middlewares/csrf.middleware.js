@@ -5,19 +5,28 @@ const CSRF_TOKEN_NAME = "csrf_token";
 const CSRF_HEADER = "x-csrf-token";
 const SAFE_METHODS = ["GET", "HEAD", "OPTIONS"];
 
-function generateToken() {
-  return crypto.randomBytes(32).toString("hex");
+function getCsrfCookieOptions() {
+  const isProduction = process.env.NODE_ENV === "production";
+
+  return {
+    httpOnly: false,
+    secure: isProduction,
+    sameSite: "lax",
+    path: "/",
+    ...(isProduction ? { domain: "starsellingz.com" } : {}),
+  };
 }
 
 export function setCsrfCookie(res) {
-  const token = generateToken();
-  res.cookie(CSRF_TOKEN_NAME, token, {
-    httpOnly: false,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
-    path: "/",
-  });
+  const token = crypto.randomBytes(32).toString("hex");
+
+  res.cookie(CSRF_TOKEN_NAME, token, getCsrfCookieOptions());
+
   return token;
+}
+
+export function clearCsrfCookie(res) {
+  res.clearCookie(CSRF_TOKEN_NAME, getCsrfCookieOptions());
 }
 
 export function csrfProtection(req, _res, next) {
@@ -25,16 +34,27 @@ export function csrfProtection(req, _res, next) {
     return next();
   }
 
-  const cookieToken = req.cookies[CSRF_TOKEN_NAME];
+  const cookieToken = req.cookies?.[CSRF_TOKEN_NAME];
   const headerToken = req.headers[CSRF_HEADER];
 
-  if (!cookieToken || !headerToken) {
+  if (
+    typeof cookieToken !== "string" ||
+    typeof headerToken !== "string" ||
+    !cookieToken ||
+    !headerToken
+  ) {
     return next(new AppError("CSRF token missing", 403));
   }
 
-  if (!crypto.timingSafeEqual(Buffer.from(cookieToken), Buffer.from(headerToken))) {
+  const cookieBuffer = Buffer.from(cookieToken);
+  const headerBuffer = Buffer.from(headerToken);
+
+  if (
+    cookieBuffer.length !== headerBuffer.length ||
+    !crypto.timingSafeEqual(cookieBuffer, headerBuffer)
+  ) {
     return next(new AppError("CSRF token invalid", 403));
   }
 
-  next();
+  return next();
 }
