@@ -3,14 +3,13 @@ import User from "../models/user.model.js";
 import AppError from "../utils/app-error.js";
 
 const authenticate = async (req, res, next) => {
-  let token = null;
+  let token = req.cookies?.token;
 
-  if (req.cookies && req.cookies.token) {
-    token = req.cookies.token;
-  } else {
+  if (!token) {
     const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      token = authHeader.split(" ")[1];
+
+    if (authHeader?.startsWith("Bearer ")) {
+      token = authHeader.slice(7);
     }
   }
 
@@ -19,20 +18,36 @@ const authenticate = async (req, res, next) => {
   }
 
   try {
-    const decoded = verifyToken(token);
+    const decoded = await verifyToken(token);
 
-    const user = await User.findById(decoded.id).select("tokenVersion role").lean();
+    const user = await User.findById(decoded.id)
+      .select("role +tokenVersion")
+      .lean();
+
     if (!user) {
       return next(new AppError("User no longer exists", 401));
     }
 
-    if (user.tokenVersion !== decoded.tokenVersion) {
-      return next(new AppError("Session invalidated. Please log in again", 401));
+    if (
+      !Number.isInteger(user.tokenVersion) ||
+      !Number.isInteger(decoded.tokenVersion) ||
+      user.tokenVersion !== decoded.tokenVersion
+    ) {
+      return next(
+        new AppError("Session invalidated. Please log in again", 401),
+      );
     }
 
-    req.user = { ...decoded, tokenVersion: user.tokenVersion };
-    next();
-  } catch (_error) {
+    req.user = {
+      ...decoded,
+      role: user.role,
+      tokenVersion: user.tokenVersion,
+    };
+
+    return next();
+  } catch (error) {
+    console.error("Authentication failed:", error.message);
+
     return next(new AppError("Invalid or expired token", 401));
   }
 };
