@@ -4,7 +4,7 @@ import { sendSuccess, sendError } from "../utils/response.js";
 import asyncHandler from "../utils/async-handler.js";
 
 export const getUsers = asyncHandler(async (req, res) => {
-  const { page = 1, limit = 10, search, manager, batch, status, joiningDate } = req.query;
+  const { page = 1, limit = 10, search, manager, batch, status, joiningDate, platform } = req.query;
   const result = await userService.getUsers({
     page: Number(page),
     limit: Number(limit),
@@ -13,6 +13,7 @@ export const getUsers = asyncHandler(async (req, res) => {
     batch,
     status,
     joiningDate,
+    platform,
     currentUser: req.user,
   });
   return sendSuccess(res, { message: "Users retrieved successfully", data: result });

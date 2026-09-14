@@ -193,7 +193,7 @@ export async function getUsers({ page, limit, search, manager, batch, status, jo
     };
     const field = platformFieldMap[platform.toLowerCase()];
     if (field) {
-      filter[field] = { $type: "string" };
+      filter[field] = { $exists: true, $ne: "" };
     }
   }
 
