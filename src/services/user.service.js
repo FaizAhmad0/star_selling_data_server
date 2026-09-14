@@ -174,7 +174,8 @@ export async function getUsers({ page, limit, search, manager, batch, status, jo
   }
 
   if (search) {
-    const regex = new RegExp(search, "i");
+    const trimmedSearch = search.trim();
+    const regex = new RegExp(trimmedSearch, "i");
     filter.$or = [
       { name: regex },
       { email: regex },
@@ -223,7 +224,8 @@ export async function getUsers({ page, limit, search, manager, batch, status, jo
   }
 
   if (batch) {
-    const batchRegex = new RegExp(batch, "i");
+    const trimmedBatch = batch.trim();
+    const batchRegex = new RegExp(trimmedBatch, "i");
     filter.$and = filter.$and || [];
     if (platform === "amazon") {
       filter.$and.push({ batchAmazon: batchRegex });
