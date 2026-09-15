@@ -1,4 +1,5 @@
 import User from "../models/user.model.js";
+import { isObjectIdOrHexString } from "mongoose";
 import Platform from "../models/platform.model.js";
 import { getNextUid } from "../models/counter.model.js";
 
@@ -161,6 +162,7 @@ async function processUser(userData, managerCache) {
 
 export async function getUsers({ page, limit, search, manager, batch, status, joiningDate, platform, currentUser }) {
   const filter = { role: "user" };
+  let platformKey;
 
   if (currentUser && currentUser.role === "manager") {
     filter.$and = filter.$and || [];
@@ -187,15 +189,13 @@ export async function getUsers({ page, limit, search, manager, batch, status, jo
   }
 
   if (platform) {
-    const platformFieldMap = {
-      amazon: "enrollmentIdAmazon",
-      website: "enrollmentIdWebsite",
-      etsy: "enrollmentIdEtsy",
-    };
-    const field = platformFieldMap[platform.toLowerCase()];
-    if (field) {
-      filter[field] = { $exists: true, $ne: "" };
-    }
+    // Resolve names for existing links; new filters send the platform's stable ID.
+    const platformQuery = isObjectIdOrHexString(platform)
+      ? { _id: platform }
+      : { name: new RegExp(`^${String(platform).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") };
+    const selectedPlatform = await Platform.findOne(platformQuery).select("_id name").lean();
+    filter.platforms = selectedPlatform ? selectedPlatform._id : { $in: [] };
+    platformKey = selectedPlatform?.name.toLowerCase();
   }
 
   if (manager) {
@@ -203,11 +203,11 @@ export async function getUsers({ page, limit, search, manager, batch, status, jo
     const managerIds = managerDocs.map((m) => m._id);
     if (managerIds.length > 0) {
       filter.$and = filter.$and || [];
-      const managerFilter = platform === "amazon"
+      const managerFilter = platformKey === "amazon"
         ? { amazonManager: { $in: managerIds } }
-        : platform === "website"
+        : platformKey === "website"
         ? { websiteManager: { $in: managerIds } }
-        : platform === "etsy"
+        : platformKey === "etsy"
         ? { etsyManager: { $in: managerIds } }
         : {
             $or: [
@@ -227,11 +227,11 @@ export async function getUsers({ page, limit, search, manager, batch, status, jo
     const trimmedBatch = batch.trim();
     const batchRegex = new RegExp(trimmedBatch, "i");
     filter.$and = filter.$and || [];
-    if (platform === "amazon") {
+    if (platformKey === "amazon") {
       filter.$and.push({ batchAmazon: batchRegex });
-    } else if (platform === "website") {
+    } else if (platformKey === "website") {
       filter.$and.push({ batchWebsite: batchRegex });
-    } else if (platform === "etsy") {
+    } else if (platformKey === "etsy") {
       filter.$and.push({ batchEtsy: batchRegex });
     } else {
       filter.$and.push({
@@ -253,11 +253,11 @@ export async function getUsers({ page, limit, search, manager, batch, status, jo
   if (joiningDate) {
     const dateRegex = new RegExp(joiningDate, "i");
     filter.$and = filter.$and || [];
-    if (platform === "amazon") {
+    if (platformKey === "amazon") {
       filter.$and.push({ dateAmazon: dateRegex });
-    } else if (platform === "website") {
+    } else if (platformKey === "website") {
       filter.$and.push({ dateWebsite: dateRegex });
-    } else if (platform === "etsy") {
+    } else if (platformKey === "etsy") {
       filter.$and.push({ dateEtsy: dateRegex });
     } else {
       filter.$and.push({

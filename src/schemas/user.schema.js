@@ -28,7 +28,7 @@ const userQuerySchema = z.object({
   batch: z.string().optional(),
   status: z.enum(["active", "inactive"]).optional(),
   joiningDate: z.string().optional(),
-  platform: z.enum(["amazon", "website", "etsy"]).optional(),
+  platform: z.string().trim().min(1).optional(),
 });
 
 export { createUserSchema, updateUserSchema, bulkUserSchema, userQuerySchema };
