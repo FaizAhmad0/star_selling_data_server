@@ -4,8 +4,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { Category, Product, ProductColor, ProductVariant } from "../src/models/product.model.js";
-import { bulkImportProducts } from "../src/services/product.service.js";
-import { bulkProductImportSchema, parseProductImportRow, PRODUCT_IMPORT_HEADERS } from "../src/schemas/product.schema.js";
+import { bulkImportProducts, getProducts } from "../src/services/product.service.js";
+import { bulkProductImportSchema, parseProductImportRow, PRODUCT_IMPORT_HEADERS, productQuerySchema } from "../src/schemas/product.schema.js";
 
 const requireClient = createRequire(new URL("../../client/package.json", import.meta.url));
 const XLSX = requireClient("xlsx");
@@ -17,11 +17,50 @@ const source = (overrides = {}, rowNumber = 2) => ({ rowNumber, data: { ...templ
 // in-memory persistence adapter. These tests never connect to the application DB.
 function mockDatabase(t, { failSku } = {}) {
   const collections = new Map([Category, Product, ProductColor, ProductVariant].map((Model) => [Model, []]));
-  const matches = (record, filter) => Object.entries(filter).every(([key, value]) => value instanceof RegExp ? value.test(record[key]) : String(record[key]) === String(value));
+  const matchesValue = (actual, expected) => {
+    if (expected instanceof RegExp) return Array.isArray(actual) ? actual.some((value) => expected.test(value)) : expected.test(actual || "");
+    if (expected && typeof expected === "object" && "$in" in expected) return expected.$in.some((value) => String(actual) === String(value));
+    if (expected && typeof expected === "object" && ("$gte" in expected || "$lt" in expected)) {
+      return (!expected.$gte || actual >= expected.$gte) && (!expected.$lt || actual < expected.$lt);
+    }
+    return String(actual) === String(expected);
+  };
+  const matches = (record, filter) => Object.entries(filter).every(([key, value]) => key === "$or" ? value.some((part) => matches(record, part)) : matchesValue(record[key], value));
+
+  function query(Model, filter) {
+    let sorting = {};
+    let offset = 0;
+    let count = Infinity;
+    let selection;
+    let populateCategory = false;
+    const execute = () => {
+      let records = collections.get(Model).filter((record) => matches(record, filter)).sort((left, right) => {
+        for (const [key, order] of Object.entries(sorting)) {
+          const a = left[key] instanceof Date ? left[key].getTime() : String(left[key]);
+          const b = right[key] instanceof Date ? right[key].getTime() : String(right[key]);
+          if (a !== b) return a < b ? -order : order;
+        }
+        return 0;
+      }).slice(offset, offset + count);
+      if (populateCategory) records = records.map((record) => ({ ...record, categoryId: collections.get(Category).find((category) => String(category._id) === String(record.categoryId)) || null }));
+      if (selection) records = records.map((record) => Object.fromEntries(["_id", ...selection.split(" ")].map((key) => [key, record[key]])));
+      return records;
+    };
+    const chain = {
+      sort(value) { sorting = value; return chain; },
+      skip(value) { offset = value; return chain; },
+      limit(value) { count = value; return chain; },
+      select(value) { selection = value; return chain; },
+      populate(path) { assert.equal(path, "categoryId"); populateCategory = true; return chain; },
+      lean() { return Promise.resolve(execute()); },
+      then(resolve, reject) { return Promise.resolve().then(execute).then(resolve, reject); },
+    };
+    return chain;
+  }
 
   function save(Model, values, existing) {
     if (Model === ProductVariant && values.sku === failSku) throw new Error("Simulated database write failure");
-    const doc = new Model(values);
+    const doc = new Model({ createdAt: new Date(), ...values });
     const error = doc.validateSync();
     if (error) throw error;
     const record = doc.toObject();
@@ -40,7 +79,8 @@ function mockDatabase(t, { failSku } = {}) {
 
   for (const [Model, records] of collections) {
     t.mock.method(Model, "init", async () => Model);
-    t.mock.method(Model, "find", (filter) => ({ limit: async (limit) => records.filter((record) => matches(record, filter)).slice(0, limit) }));
+    t.mock.method(Model, "find", (filter) => query(Model, filter));
+    t.mock.method(Model, "countDocuments", async (filter) => records.filter((record) => matches(record, filter)).length);
     t.mock.method(Model, "findOne", async (filter) => records.find((record) => matches(record, filter)) || null);
     t.mock.method(Model, "findById", async (id) => records.find((record) => String(record._id) === String(id)) || null);
     t.mock.method(Model, "create", async (data) => save(Model, data));
@@ -182,7 +222,86 @@ test("request validation bounds batches while leaving row errors for the service
   assert.equal(bulkProductImportSchema.safeParse({ rows: [source({ STOCK: -1 })] }).success, true);
 });
 
-test("HTTP endpoint enforces CSRF/admin authentication and returns per-row import results", async (t) => {
+test("lists every product across pages with category, colors, variants, and total stock", async (t) => {
+  const db = mockDatabase(t);
+  await bulkImportProducts([
+    source({ SKU: "ALPHA-M", TITLE: "Alpha", STOCK: 2 }),
+    source({ SKU: "ALPHA-L", TITLE: "Alpha", SIZE: "L", STOCK: 3 }),
+    source({ SKU: "BETA-M", TITLE: "Beta", STOCK: 0 }),
+    source({ SKU: "GAMMA-M", TITLE: "Gamma", STOCK: 8 }),
+  ]);
+  const first = await getProducts({ page: 1, limit: 2 });
+  const second = await getProducts({ page: 2, limit: 2 });
+  assert.deepEqual(first.meta, { page: 1, limit: 2, total: 3, totalPages: 2 });
+  assert.deepEqual(first.data.map((product) => product.title), ["Gamma", "Beta"]);
+  assert.equal(second.data[0].title, "Alpha");
+  assert.equal(second.data[0].variantCount, 2);
+  assert.equal(second.data[0].totalStock, 5);
+  assert.equal(second.data[0].colors.length, 1);
+  assert.equal(second.data[0].colors[0].variants.length, 2);
+  assert.equal(second.data[0].category, db.categories[0].name);
+  assert.deepEqual(second.data[0].colors[0].images, parseProductImportRow(templateRow).images);
+  assert.equal(first.data[1].totalStock, 0);
+  assert.deepEqual((await getProducts({ page: 5, limit: 2 })).data, []);
+});
+
+test("searches title, SKU, category, and materials literally, combining filters", async (t) => {
+  mockDatabase(t);
+  await bulkImportProducts([
+    source({ SKU: "ALPHA-M", TITLE: "Alpha [Set]", CATEGORY: "Clothing", "MATERIAL 1": "Cotton" }),
+    source({ SKU: "ALPHA-L", TITLE: "Alpha [Set]", CATEGORY: "Clothing", SIZE: "L" }),
+    source({ SKU: "BETA-M", TITLE: "Beta", CATEGORY: "Accessories", "MATERIAL 1": "Silk" }),
+  ]);
+  for (const search of ["alpha-l", "[", "Clothing", "cotton"]) {
+    const response = await getProducts({ search });
+    assert.equal(response.meta.total, 1);
+    assert.equal(response.data[0].title, "Alpha [Set]");
+    assert.equal(response.data[0].variantCount, 2);
+  }
+  assert.equal((await getProducts({ search: ".*" })).meta.total, 0);
+  assert.equal((await getProducts({ category: "Accessories", material: "silk" })).data[0].title, "Beta");
+  assert.equal((await getProducts({ category: "Clothing", material: "silk" })).meta.total, 0);
+  assert.equal((await getProducts({ category: "Unknown" })).meta.total, 0);
+});
+
+test("created-date filters include the full end date and exclude the following day", async (t) => {
+  const db = mockDatabase(t);
+  await bulkImportProducts([
+    source({ SKU: "EARLY", TITLE: "Early" }),
+    source({ SKU: "END-DAY", TITLE: "End day" }),
+    source({ SKU: "NEXT-DAY", TITLE: "Next day" }),
+  ]);
+  db.products[0].createdAt = new Date("2026-09-01T00:00:00.000Z");
+  db.products[1].createdAt = new Date("2026-09-30T23:59:59.999Z");
+  db.products[2].createdAt = new Date("2026-10-01T00:00:00.000Z");
+  const result = await getProducts({ createdAtFrom: "2026-09-30", createdAtTo: "2026-09-30" });
+  assert.deepEqual(result.data.map((product) => product.title), ["End day"]);
+});
+
+test("empty inventory and products without variants or a category remain readable", async (t) => {
+  const db = mockDatabase(t);
+  assert.deepEqual(await getProducts(), { data: [], meta: { page: 1, limit: 10, total: 0, totalPages: 0 } });
+  const category = await Category.create({ name: "Empty" });
+  await Product.create({ title: "No variants", categoryId: category._id });
+  db.categories.length = 0;
+  const result = await getProducts();
+  assert.equal(result.data[0].category, "");
+  assert.equal(result.data[0].categoryId, null);
+  assert.deepEqual(result.data[0].colors, []);
+  assert.equal(result.data[0].totalStock, 0);
+  assert.equal(result.data[0].variantCount, 0);
+});
+
+test("validates pagination, search types, actual dates, and date range order", () => {
+  assert.deepEqual(productQuerySchema.parse({}), { page: 1, limit: 10 });
+  for (const query of [
+    { page: 0 }, { page: "bad" }, { limit: 101 }, { search: { $ne: "" } },
+    { createdAtFrom: "2026-02-30" }, { createdAtTo: "invalid" },
+    { createdAtFrom: "2026-10-01", createdAtTo: "2026-09-01" },
+  ]) assert.equal(productQuerySchema.safeParse(query).success, false);
+});
+
+test("HTTP product endpoints enforce admin authentication and return import/list results", async (t) => {
   const db = mockDatabase(t);
   const previousSecret = process.env.JWT_SECRET;
   const previousEnvironment = process.env.NODE_ENV;
@@ -215,7 +334,7 @@ test("HTTP endpoint enforces CSRF/admin authentication and returns per-row impor
     return { status: response.status, body: await response.json() };
   };
 
-  assert.equal((await post({ rows: [source()] }, {})).status, 403);
+  assert.equal((await post({ rows: [source()] }, {})).status, 401);
   assert.equal((await post({ rows: [source()] }, csrfHeaders)).status, 401);
   role = "manager";
   assert.equal((await post({ rows: [source()] })).status, 403);
@@ -231,4 +350,19 @@ test("HTTP endpoint enforces CSRF/admin authentication and returns per-row impor
   const repeat = await post({ rows: [source({ STOCK: 42 })] });
   assert.equal(repeat.body.data.updated, 1);
   assert.equal(db.variants[0].stock, 42);
+
+  const get = async (query = "", requestHeaders = { cookie: `token=${token}` }) => {
+    const response = await fetch(`${url.replace("/bulk-import", "")}${query}`, { headers: requestHeaders, signal: AbortSignal.timeout(5_000) });
+    return { status: response.status, body: await response.json() };
+  };
+  assert.equal((await get("", {})).status, 401);
+  role = "manager";
+  assert.equal((await get()).status, 403);
+  role = "admin";
+  assert.equal((await get("?limit=0")).status, 400);
+  const list = await get("?page=1&limit=10");
+  assert.equal(list.status, 200);
+  assert.equal(list.body.data.meta.total, 1);
+  assert.equal(list.body.data.data[0].totalStock, 42);
+  assert.equal(list.body.data.data[0].colors[0].variants[0].sku, templateRow.SKU);
 });

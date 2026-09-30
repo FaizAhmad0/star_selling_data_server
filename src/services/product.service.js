@@ -6,6 +6,79 @@ const conflict = (message) => new AppError(message, 409);
 const canonical = (value) => String(value).trim().replace(/\s+/g, " ").toLowerCase();
 const titleLocks = new Map();
 
+const literalSearch = (value) => new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+
+export async function getProducts({ page = 1, limit = 10, search, category, material, createdAtFrom, createdAtTo } = {}) {
+  const filter = {};
+  if (category) {
+    const categories = await Category.find({ name: literalSearch(category) }).select("_id").lean();
+    filter.categoryId = { $in: categories.map((item) => item._id) };
+  }
+  if (material) filter.materials = literalSearch(material);
+  if (createdAtFrom || createdAtTo) {
+    filter.createdAt = {};
+    if (createdAtFrom) filter.createdAt.$gte = new Date(`${createdAtFrom}T00:00:00.000Z`);
+    if (createdAtTo) {
+      const exclusiveEnd = new Date(`${createdAtTo}T00:00:00.000Z`);
+      exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() + 1);
+      filter.createdAt.$lt = exclusiveEnd;
+    }
+  }
+  if (search) {
+    const regex = literalSearch(search);
+    const [categories, variants] = await Promise.all([
+      Category.find({ name: regex }).select("_id").lean(),
+      ProductVariant.find({ sku: regex }).select("colorId").lean(),
+    ]);
+    const matchingColors = variants.length
+      ? await ProductColor.find({ _id: { $in: variants.map((variant) => variant.colorId) } }).select("productId").lean()
+      : [];
+    filter.$or = [
+      { title: regex }, { shortDescription: regex }, { materials: regex },
+      { categoryId: { $in: categories.map((item) => item._id) } },
+      { _id: { $in: matchingColors.map((color) => color.productId) } },
+    ];
+  }
+
+  const [products, total] = await Promise.all([
+    Product.find(filter).sort({ createdAt: -1, _id: -1 }).skip((page - 1) * limit).limit(limit).populate("categoryId", "name").lean(),
+    Product.countDocuments(filter),
+  ]);
+  const meta = { page, limit, total, totalPages: Math.ceil(total / limit) };
+  if (!products.length) return { data: [], meta };
+
+  // Fetch the current page's relationships in batches, rather than querying each row.
+  const colors = await ProductColor.find({ productId: { $in: products.map((product) => product._id) } }).sort({ color: 1, _id: 1 }).lean();
+  const variants = colors.length
+    ? await ProductVariant.find({ colorId: { $in: colors.map((color) => color._id) } }).sort({ sku: 1, _id: 1 }).lean()
+    : [];
+  const variantsByColor = new Map();
+  for (const variant of variants) {
+    const key = String(variant.colorId);
+    if (!variantsByColor.has(key)) variantsByColor.set(key, []);
+    variantsByColor.get(key).push(variant);
+  }
+  const colorsByProduct = new Map();
+  for (const color of colors) {
+    const key = String(color.productId);
+    if (!colorsByProduct.has(key)) colorsByProduct.set(key, []);
+    colorsByProduct.get(key).push({ ...color, variants: variantsByColor.get(String(color._id)) || [] });
+  }
+  const data = products.map((product) => {
+    const productColors = colorsByProduct.get(String(product._id)) || [];
+    const productVariants = productColors.flatMap((color) => color.variants);
+    return {
+      ...product,
+      categoryId: product.categoryId?._id || null,
+      category: product.categoryId?.name || "",
+      colors: productColors,
+      variantCount: productVariants.length,
+      totalStock: productVariants.reduce((sum, variant) => sum + (variant.stock || 0), 0),
+    };
+  });
+  return { data, meta };
+}
+
 async function withTitleLock(title, operation) {
   // The existing model has no unique title index. Serialize matching titles
   // within this server process without changing the user's product model.

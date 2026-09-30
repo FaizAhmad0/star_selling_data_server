@@ -1,5 +1,22 @@
 import { z } from "zod";
 
+const filterDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").refine((value) => {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}, "Invalid date");
+
+export const productQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).max(1_000_000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  search: z.string().trim().max(200).optional(),
+  category: z.string().trim().max(100).optional(),
+  material: z.string().trim().max(100).optional(),
+  createdAtFrom: filterDate.optional(),
+  createdAtTo: filterDate.optional(),
+}).refine((query) => !query.createdAtFrom || !query.createdAtTo || query.createdAtFrom <= query.createdAtTo, {
+  message: "The start date must be on or before the end date", path: ["createdAtTo"],
+});
+
 export const PRODUCT_IMPORT_HEADERS = [
   "SKU", "TITLE", "BULLET POINT 1", "BULLET POINT 2", "BULLET POINT 3", "BULLET POINT 4",
   "SHORT DESCRIPTION", "LONG DESCRIPTION", "DIMENSION", "MATERIAL 1", "MATERIAL 2", "MATERIAL 3",
