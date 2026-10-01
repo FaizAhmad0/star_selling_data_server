@@ -4,8 +4,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { Category, Product, ProductColor, ProductVariant } from "../src/models/product.model.js";
-import { bulkImportProducts, getProducts } from "../src/services/product.service.js";
-import { bulkProductImportSchema, parseProductImportRow, PRODUCT_IMPORT_HEADERS, productQuerySchema } from "../src/schemas/product.schema.js";
+import { bulkImportProducts, getProducts, updateProductVariantStock } from "../src/services/product.service.js";
+import { bulkProductImportSchema, parseProductImportRow, PRODUCT_IMPORT_HEADERS, productQuerySchema, productVariantParamsSchema, updateProductStockSchema } from "../src/schemas/product.schema.js";
 
 const requireClient = createRequire(new URL("../../client/package.json", import.meta.url));
 const XLSX = requireClient("xlsx");
@@ -87,6 +87,7 @@ function mockDatabase(t, { failSku } = {}) {
     t.mock.method(Model, "findOneAndUpdate", async (filter, update, options) => {
       assert.equal(options.runValidators, true);
       const existing = records.find((record) => matches(record, filter));
+      if (!existing && !options.upsert) return null;
       const record = save(Model, { ...(existing || update.$setOnInsert), ...update.$set }, existing);
       return options.includeResultMetadata ? { value: record, lastErrorObject: { updatedExisting: Boolean(existing) } } : record;
     });
@@ -301,7 +302,70 @@ test("validates pagination, search types, actual dates, and date range order", (
   ]) assert.equal(productQuerySchema.safeParse(query).success, false);
 });
 
-test("HTTP product endpoints enforce admin authentication and return import/list results", async (t) => {
+test("updates only the selected variant's stock and preserves its other fields", async (t) => {
+  const db = mockDatabase(t);
+  await bulkImportProducts([source(), source({ SKU: "OTHER-SIZE", SIZE: "L", STOCK: 12 })]);
+  const productId = db.products[0]._id;
+  const original = { ...db.variants[0] };
+  const other = { ...db.variants[1] };
+  const result = await updateProductVariantStock(productId, original._id, 25);
+  assert.equal(result.variant.stock, 25);
+  assert.deepEqual(db.variants[0], { ...original, stock: 25 });
+  assert.deepEqual(db.variants[1], other);
+  assert.equal(db.products.length, 1);
+  assert.equal(db.colors.length, 1);
+  assert.equal(db.variants.length, 2);
+  assert.equal((await getProducts()).data[0].totalStock, 37);
+});
+
+test("marks a SKU out of stock, supports retries, and permits future restocking", async (t) => {
+  const db = mockDatabase(t);
+  await bulkImportProducts([source()]);
+  const productId = db.products[0]._id;
+  const variantId = db.variants[0]._id;
+  await updateProductVariantStock(productId, variantId, 0);
+  await updateProductVariantStock(productId, variantId, 0);
+  assert.equal(db.variants[0].stock, 0);
+  assert.equal((await getProducts()).data[0].totalStock, 0);
+  await updateProductVariantStock(productId, variantId, 8);
+  assert.equal(db.variants[0].stock, 8);
+  assert.equal((await getProducts()).data[0].totalStock, 8);
+  assert.equal(db.variants.length, 1);
+});
+
+test("rejects missing products/variants and variants belonging to another product", async (t) => {
+  const db = mockDatabase(t);
+  await bulkImportProducts([source(), source({ TITLE: "Different Product", SKU: "DIFFERENT-PRODUCT" })]);
+  const stockBefore = db.variants.map((variant) => variant.stock);
+  const missingId = "000000000000000000000001";
+  await assert.rejects(updateProductVariantStock(missingId, db.variants[0]._id, 0), { statusCode: 404 });
+  await assert.rejects(updateProductVariantStock(db.products[0]._id, missingId, 0), { statusCode: 404 });
+  await assert.rejects(updateProductVariantStock(db.products[1]._id, db.variants[0]._id, 0), { statusCode: 404 });
+  assert.deepEqual(db.variants.map((variant) => variant.stock), stockBefore);
+});
+
+test("a variant removed during an update is not recreated", async (t) => {
+  const db = mockDatabase(t);
+  await bulkImportProducts([source()]);
+  t.mock.method(ProductVariant, "findOneAndUpdate", async (_filter, _update, options) => {
+    assert.equal(options.upsert, false);
+    return null;
+  });
+  await assert.rejects(updateProductVariantStock(db.products[0]._id, db.variants[0]._id, 0), { statusCode: 404 });
+});
+
+test("stock update validation accepts zero and rejects invalid counts or unrelated changes", () => {
+  assert.deepEqual(updateProductStockSchema.parse({ stock: 0 }), { stock: 0 });
+  assert.deepEqual(updateProductStockSchema.parse({ stock: 100 }), { stock: 100 });
+  for (const stock of [-1, 1.5, "", "10", null, true, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(updateProductStockSchema.safeParse({ stock }).success, false);
+  }
+  assert.equal(updateProductStockSchema.safeParse({ stock: 1, sku: "CHANGED" }).success, false);
+  assert.equal(updateProductStockSchema.safeParse({}).success, false);
+  assert.equal(productVariantParamsSchema.safeParse({ productId: "bad", variantId: "000000000000000000000001" }).success, false);
+});
+
+test("HTTP product endpoints enforce admin authentication and return import/list/stock results", async (t) => {
   const db = mockDatabase(t);
   const previousSecret = process.env.JWT_SECRET;
   const previousEnvironment = process.env.NODE_ENV;
@@ -365,4 +429,28 @@ test("HTTP product endpoints enforce admin authentication and return import/list
   assert.equal(list.body.data.meta.total, 1);
   assert.equal(list.body.data.data[0].totalStock, 42);
   assert.equal(list.body.data.data[0].colors[0].variants[0].sku, templateRow.SKU);
+
+  const stockUrl = `${url.replace("/bulk-import", "")}/${db.products[0]._id}/variants/${db.variants[0]._id}/stock`;
+  const patch = async (body, requestHeaders = headers, requestUrl = stockUrl) => {
+    const response = await fetch(requestUrl, {
+      method: "PATCH", headers: { "content-type": "application/json", ...requestHeaders },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(5_000),
+    });
+    return { status: response.status, body: await response.json() };
+  };
+  assert.equal((await patch({ stock: 0 }, {})).status, 401);
+  role = "manager";
+  assert.equal((await patch({ stock: 0 })).status, 403);
+  role = "admin";
+  assert.equal((await patch({ stock: -1 })).status, 400);
+  assert.equal((await patch({ stock: 2.5 })).status, 400);
+  assert.equal((await patch({ stock: 1, sku: "CHANGED" })).status, 400);
+  assert.equal((await patch({ stock: 1 }, headers, stockUrl.replace(String(db.variants[0]._id), "invalid-id"))).status, 400);
+  const outOfStock = await patch({ stock: 0 });
+  assert.equal(outOfStock.status, 200);
+  assert.equal(outOfStock.body.data.variant.stock, 0);
+  assert.match(outOfStock.body.message, /out of stock/);
+  assert.equal((await get()).body.data.data[0].totalStock, 0);
+  assert.equal((await patch({ stock: 10 })).status, 200);
+  assert.equal((await get()).body.data.data[0].totalStock, 10);
 });

@@ -1,23 +1,69 @@
-import { Category, Product, ProductColor, ProductVariant } from "../models/product.model.js";
-import { normalizeProductTitle, parseProductImportRow } from "../schemas/product.schema.js";
+import {
+  Category,
+  Product,
+  ProductColor,
+  ProductVariant,
+} from "../models/product.model.js";
+import {
+  normalizeProductTitle,
+  parseProductImportRow,
+} from "../schemas/product.schema.js";
 import AppError from "../utils/app-error.js";
 
 const conflict = (message) => new AppError(message, 409);
-const canonical = (value) => String(value).trim().replace(/\s+/g, " ").toLowerCase();
+const canonical = (value) =>
+  String(value).trim().replace(/\s+/g, " ").toLowerCase();
 const titleLocks = new Map();
 
-const literalSearch = (value) => new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+const literalSearch = (value) =>
+  new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 
-export async function getProducts({ page = 1, limit = 10, search, category, material, createdAtFrom, createdAtTo } = {}) {
+export async function updateProductVariantStock(productId, variantId, stock) {
+  const product = await Product.findById(productId);
+  if (!product) throw new AppError("Product not found", 404);
+
+  const variant = await ProductVariant.findById(variantId);
+  if (!variant) throw new AppError("Variant not found", 404);
+  const color = await ProductColor.findOne({
+    _id: variant.colorId,
+    productId: product._id,
+  });
+  if (!color) throw new AppError("Variant not found for this product", 404);
+
+  const updatedVariant = await ProductVariant.findOneAndUpdate(
+    { _id: variant._id, colorId: color._id },
+    { $set: { stock } },
+    { new: true, runValidators: true, upsert: false },
+  );
+  if (!updatedVariant)
+    throw new AppError(
+      "Variant no longer exists. Refresh the product list and try again.",
+      404,
+    );
+  return { productId: product._id, variant: updatedVariant };
+}
+
+export async function getProducts({
+  page = 1,
+  limit = 10,
+  search,
+  category,
+  material,
+  createdAtFrom,
+  createdAtTo,
+} = {}) {
   const filter = {};
   if (category) {
-    const categories = await Category.find({ name: literalSearch(category) }).select("_id").lean();
+    const categories = await Category.find({ name: literalSearch(category) })
+      .select("_id")
+      .lean();
     filter.categoryId = { $in: categories.map((item) => item._id) };
   }
   if (material) filter.materials = literalSearch(material);
   if (createdAtFrom || createdAtTo) {
     filter.createdAt = {};
-    if (createdAtFrom) filter.createdAt.$gte = new Date(`${createdAtFrom}T00:00:00.000Z`);
+    if (createdAtFrom)
+      filter.createdAt.$gte = new Date(`${createdAtFrom}T00:00:00.000Z`);
     if (createdAtTo) {
       const exclusiveEnd = new Date(`${createdAtTo}T00:00:00.000Z`);
       exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() + 1);
@@ -31,26 +77,45 @@ export async function getProducts({ page = 1, limit = 10, search, category, mate
       ProductVariant.find({ sku: regex }).select("colorId").lean(),
     ]);
     const matchingColors = variants.length
-      ? await ProductColor.find({ _id: { $in: variants.map((variant) => variant.colorId) } }).select("productId").lean()
+      ? await ProductColor.find({
+          _id: { $in: variants.map((variant) => variant.colorId) },
+        })
+          .select("productId")
+          .lean()
       : [];
     filter.$or = [
-      { title: regex }, { shortDescription: regex }, { materials: regex },
+      { title: regex },
+      { shortDescription: regex },
+      { materials: regex },
       { categoryId: { $in: categories.map((item) => item._id) } },
       { _id: { $in: matchingColors.map((color) => color.productId) } },
     ];
   }
 
   const [products, total] = await Promise.all([
-    Product.find(filter).sort({ createdAt: -1, _id: -1 }).skip((page - 1) * limit).limit(limit).populate("categoryId", "name").lean(),
+    Product.find(filter)
+      .sort({ createdAt: -1, _id: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate("categoryId", "name")
+      .lean(),
     Product.countDocuments(filter),
   ]);
   const meta = { page, limit, total, totalPages: Math.ceil(total / limit) };
   if (!products.length) return { data: [], meta };
 
   // Fetch the current page's relationships in batches, rather than querying each row.
-  const colors = await ProductColor.find({ productId: { $in: products.map((product) => product._id) } }).sort({ color: 1, _id: 1 }).lean();
+  const colors = await ProductColor.find({
+    productId: { $in: products.map((product) => product._id) },
+  })
+    .sort({ color: 1, _id: 1 })
+    .lean();
   const variants = colors.length
-    ? await ProductVariant.find({ colorId: { $in: colors.map((color) => color._id) } }).sort({ sku: 1, _id: 1 }).lean()
+    ? await ProductVariant.find({
+        colorId: { $in: colors.map((color) => color._id) },
+      })
+        .sort({ sku: 1, _id: 1 })
+        .lean()
     : [];
   const variantsByColor = new Map();
   for (const variant of variants) {
@@ -62,7 +127,12 @@ export async function getProducts({ page = 1, limit = 10, search, category, mate
   for (const color of colors) {
     const key = String(color.productId);
     if (!colorsByProduct.has(key)) colorsByProduct.set(key, []);
-    colorsByProduct.get(key).push({ ...color, variants: variantsByColor.get(String(color._id)) || [] });
+    colorsByProduct
+      .get(key)
+      .push({
+        ...color,
+        variants: variantsByColor.get(String(color._id)) || [],
+      });
   }
   const data = products.map((product) => {
     const productColors = colorsByProduct.get(String(product._id)) || [];
@@ -73,7 +143,10 @@ export async function getProducts({ page = 1, limit = 10, search, category, mate
       category: product.categoryId?.name || "",
       colors: productColors,
       variantCount: productVariants.length,
-      totalStock: productVariants.reduce((sum, variant) => sum + (variant.stock || 0), 0),
+      totalStock: productVariants.reduce(
+        (sum, variant) => sum + (variant.stock || 0),
+        0,
+      ),
     };
   });
   return { data, meta };
@@ -85,7 +158,9 @@ async function withTitleLock(title, operation) {
   const key = normalizeProductTitle(title);
   const previous = titleLocks.get(key) || Promise.resolve();
   let release;
-  const pending = new Promise((resolve) => { release = resolve; });
+  const pending = new Promise((resolve) => {
+    release = resolve;
+  });
   titleLocks.set(key, pending);
   await previous;
   try {
@@ -98,9 +173,16 @@ async function withTitleLock(title, operation) {
 
 async function findOrCreate(Model, filter, data) {
   try {
-    return await Model.findOneAndUpdate(filter, { $setOnInsert: data }, {
-      upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true,
-    });
+    return await Model.findOneAndUpdate(
+      filter,
+      { $setOnInsert: data },
+      {
+        upsert: true,
+        new: true,
+        runValidators: true,
+        setDefaultsOnInsert: true,
+      },
+    );
   } catch (error) {
     // Another import may have inserted the same category or color.
     if (error.code === 11000) {
@@ -114,26 +196,42 @@ async function findOrCreate(Model, filter, data) {
 async function checkCategory(product, categoryName) {
   const category = await Category.findById(product.categoryId);
   if (!category || canonical(category.name) !== categoryName) {
-    throw conflict("The existing product belongs to a different or missing category. Use its existing category or a different title.");
+    throw conflict(
+      "The existing product belongs to a different or missing category. Use its existing category or a different title.",
+    );
   }
 }
 
 async function resolveProduct(row) {
-  const escapedTitle = row.title.split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+  const escapedTitle = row.title
+    .split(/\s+/)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("\\s+");
   const matches = await Product.find({
     title: new RegExp(`^\\s*${escapedTitle}\\s*$`, "i"),
   }).limit(2);
-  if (matches.length > 1) throw conflict("Multiple products have this title. Resolve the duplicate titles before importing a new SKU.");
+  if (matches.length > 1)
+    throw conflict(
+      "Multiple products have this title. Resolve the duplicate titles before importing a new SKU.",
+    );
   if (matches.length === 1) {
     await checkCategory(matches[0], row.category);
     return matches[0];
   }
 
-  const category = await findOrCreate(Category, { name: row.category }, { name: row.category });
+  const category = await findOrCreate(
+    Category,
+    { name: row.category },
+    { name: row.category },
+  );
   const product = await Product.create({
-    title: row.title, categoryId: category._id,
-    bulletPoints: row.bulletPoints, shortDescription: row.shortDescription,
-    longDescription: row.longDescription, materials: row.materials, packageContents: row.packageContents,
+    title: row.title,
+    categoryId: category._id,
+    bulletPoints: row.bulletPoints,
+    shortDescription: row.shortDescription,
+    longDescription: row.longDescription,
+    materials: row.materials,
+    packageContents: row.packageContents,
   });
   await checkCategory(product, row.category);
   return product;
@@ -145,23 +243,42 @@ async function importRow(row) {
   let color;
   if (existingVariant) {
     color = await ProductColor.findById(existingVariant.colorId);
-    product = color && await Product.findById(color.productId);
-    if (!product || !color) throw conflict("This SKU has a missing product or color. Repair the existing variant before importing it.");
-    if (normalizeProductTitle(product.title) !== normalizeProductTitle(row.title)) {
+    product = color && (await Product.findById(color.productId));
+    if (!product || !color)
+      throw conflict(
+        "This SKU has a missing product or color. Repair the existing variant before importing it.",
+      );
+    if (
+      normalizeProductTitle(product.title) !== normalizeProductTitle(row.title)
+    ) {
       throw conflict("This SKU already belongs to a different product title.");
     }
     await checkCategory(product, row.category);
-    if (canonical(color.color) !== row.color || canonical(existingVariant.size) !== canonical(row.size)) {
+    if (
+      canonical(color.color) !== row.color ||
+      canonical(existingVariant.size) !== canonical(row.size)
+    ) {
       throw conflict("This SKU already belongs to a different color or size.");
     }
   } else {
     product = await resolveProduct(row);
-    color = await findOrCreate(ProductColor, { productId: product._id, color: row.color }, {
-      productId: product._id, color: row.color, images: row.images,
+    color = await findOrCreate(
+      ProductColor,
+      { productId: product._id, color: row.color },
+      {
+        productId: product._id,
+        color: row.color,
+        images: row.images,
+      },
+    );
+    const sizeVariant = await ProductVariant.findOne({
+      colorId: color._id,
+      size: row.size,
     });
-    const sizeVariant = await ProductVariant.findOne({ colorId: color._id, size: row.size });
     if (sizeVariant && sizeVariant.sku !== row.sku) {
-      throw conflict(`This product, color, and size already use SKU ${sizeVariant.sku}. Use that SKU to update stock.`);
+      throw conflict(
+        `This product, color, and size already use SKU ${sizeVariant.sku}. Use that SKU to update stock.`,
+      );
     }
   }
 
@@ -171,35 +288,69 @@ async function importRow(row) {
     { sku: row.sku, colorId: color._id, size: row.size },
     {
       $set: {
-        stock: row.stock, dimensions: row.dimensions,
-        estimatedCostPrice: row.estimatedCostPrice, estimatedSellingPrice: row.estimatedSellingPrice,
-        estimatedCostPriceOOI: row.estimatedCostPriceOOI, estimatedSalePriceOOI: row.estimatedSalePriceOOI,
+        stock: row.stock,
+        dimensions: row.dimensions,
+        estimatedCostPrice: row.estimatedCostPrice,
+        estimatedSellingPrice: row.estimatedSellingPrice,
+        estimatedCostPriceOOI: row.estimatedCostPriceOOI,
+        estimatedSalePriceOOI: row.estimatedSalePriceOOI,
       },
       $setOnInsert: { sku: row.sku, colorId: color._id, size: row.size },
     },
-    { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true, includeResultMetadata: true },
+    {
+      upsert: true,
+      new: true,
+      runValidators: true,
+      setDefaultsOnInsert: true,
+      includeResultMetadata: true,
+    },
   );
   return {
-    sku: row.sku, productId: product._id, colorId: color._id, variantId: result.value._id,
+    sku: row.sku,
+    productId: product._id,
+    colorId: color._id,
+    variantId: result.value._id,
     status: result.lastErrorObject?.updatedExisting ? "updated" : "created",
   };
 }
 
 function rowErrorMessage(error) {
-  if (error.name === "ZodError") return error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ");
+  if (error.name === "ZodError")
+    return error.issues
+      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+      .join("; ");
   if (error.isOperational) return error.message;
-  if (error.code === 11000) return "SKU or product/color/size already exists with conflicting values. Check the row and retry.";
-  if (error.name === "ValidationError") return Object.values(error.errors).map((item) => item.message).join("; ");
+  if (error.code === 11000)
+    return "SKU or product/color/size already exists with conflicting values. Check the row and retry.";
+  if (error.name === "ValidationError")
+    return Object.values(error.errors)
+      .map((item) => item.message)
+      .join("; ");
   return "Could not save this row. Please retry the import.";
 }
 
 export async function bulkImportProducts(rows) {
-  const result = { total: rows.length, created: 0, updated: 0, successful: [], failed: [] };
+  const result = {
+    total: rows.length,
+    created: 0,
+    updated: 0,
+    successful: [],
+    failed: [],
+  };
   // Wait for the uniqueness constraints before allowing any concurrent upserts.
   try {
-    await Promise.all([Category.init(), Product.init(), ProductColor.init(), ProductVariant.init()]);
+    await Promise.all([
+      Category.init(),
+      Product.init(),
+      ProductColor.init(),
+      ProductVariant.init(),
+    ]);
   } catch (_error) {
-    result.failed = rows.map((row) => ({ ...row, reason: "Product storage could not be initialized. Please retry or contact an administrator." }));
+    result.failed = rows.map((row) => ({
+      ...row,
+      reason:
+        "Product storage could not be initialized. Please retry or contact an administrator.",
+    }));
     return result;
   }
 
@@ -211,7 +362,11 @@ export async function bulkImportProducts(rows) {
       result[saved.status] += 1;
       result.successful.push({ rowNumber: source.rowNumber, ...saved });
     } catch (error) {
-      result.failed.push({ rowNumber: source.rowNumber, data: source.data, reason: rowErrorMessage(error) });
+      result.failed.push({
+        rowNumber: source.rowNumber,
+        data: source.data,
+        reason: rowErrorMessage(error),
+      });
     }
   }
   return result;

@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+export const productVariantParamsSchema = z.object({
+  productId: z.string().regex(/^[a-f\d]{24}$/i, "Invalid product ID"),
+  variantId: z.string().regex(/^[a-f\d]{24}$/i, "Invalid variant ID"),
+});
+
+export const updateProductStockSchema = z.object({
+  stock: z.number().finite().int().min(0).max(Number.MAX_SAFE_INTEGER),
+}).strict();
+
 const filterDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").refine((value) => {
   const date = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
